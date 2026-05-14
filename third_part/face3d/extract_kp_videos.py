@@ -15,7 +15,8 @@ from torch.multiprocessing import Pool, Process, set_start_method
 class KeypointExtractor():
     def __init__(self):
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        self.detector = face_alignment.FaceAlignment(face_alignment.LandmarksType._2D, device=device)   
+        landmarks_type = getattr(face_alignment.LandmarksType, 'TWO_D', None) or getattr(face_alignment.LandmarksType, '_2D')
+        self.detector = face_alignment.FaceAlignment(landmarks_type, device=device)   
 
     def extract_keypoint(self, images, name=None, info=True):
         if isinstance(images, list):
@@ -36,9 +37,15 @@ class KeypointExtractor():
             np.savetxt(os.path.splitext(name)[0]+'.txt', keypoints.reshape(-1))
             return keypoints
         else:
+            shape = [68, 2]
+            keypoints = -1. * np.ones(shape)
             while True:
                 try:
-                    keypoints = self.detector.get_landmarks_from_image(np.array(images))[0]
+                    result = self.detector.get_landmarks_from_image(np.array(images))
+                    if result is None or len(result) == 0:
+                        print('No face detected in this image')
+                        break
+                    keypoints = result[0]
                     break
                 except RuntimeError as e:
                     if str(e).startswith('CUDA'):
@@ -46,11 +53,9 @@ class KeypointExtractor():
                         time.sleep(1)
                     else:
                         print(e)
-                        break    
+                        break
                 except TypeError:
                     print('No face detected in this image')
-                    shape = [68, 2]
-                    keypoints = -1. * np.ones(shape)                    
                     break
             if name is not None:
                 np.savetxt(os.path.splitext(name)[0]+'.txt', keypoints.reshape(-1))

@@ -83,7 +83,7 @@ class Visualizer(object):
         else:
             return input_image
         image_numpy = image_tensor[0].cpu().float().numpy()
-        im = self.numpy2im(image_numpy, imtype).resize((80, 80), Image.ANTIALIAS)
+            im = self.numpy2im(image_numpy, imtype).resize((80, 80), getattr(Image, 'LANCZOS', Image.BICUBIC))
         return np.array(im)
         
     def numpy2im(self, image_numpy, imtype=np.uint8):

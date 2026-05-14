@@ -92,7 +92,7 @@ class Croper:
         shrink = int(np.floor(qsize / output_size * 0.5))
         if shrink > 1:
             rsize = (int(np.rint(float(img.size[0]) / shrink)), int(np.rint(float(img.size[1]) / shrink)))
-            img = img.resize(rsize, Image.ANTIALIAS)
+            img = img.resize(rsize, getattr(Image, 'LANCZOS', Image.BICUBIC))
             quad /= shrink
             qsize /= shrink
 

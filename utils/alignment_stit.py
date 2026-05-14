@@ -14,7 +14,8 @@ from tqdm import tqdm
 # from configs import paths_config
 def paste_image(inverse_transform, img, orig_image):
     pasted_image = orig_image.copy().convert('RGBA')
-    projected = img.convert('RGBA').transform(orig_image.size, Image.PERSPECTIVE, inverse_transform, Image.BILINEAR)
+    _bil = getattr(Image, 'BILINEAR', None) or getattr(Image.Resampling, 'BILINEAR')
+    projected = img.convert('RGBA').transform(orig_image.size, Image.PERSPECTIVE, inverse_transform, _bil)
     pasted_image.paste(projected, (0, 0), mask=projected)
     return pasted_image
 
@@ -66,6 +67,10 @@ def align_face(filepath_or_image, predictor, output_size, detector=None,
     return img
 
 
+_LANCZOS = getattr(PIL.Image, 'LANCZOS', None) or getattr(PIL.Image.Resampling, 'LANCZOS')
+_BILINEAR = getattr(PIL.Image, 'BILINEAR', None) or getattr(PIL.Image.Resampling, 'BILINEAR')
+
+
 def crop_image(filepath, output_size, quad, enable_padding=False):
     x = (quad[3] - quad[1]) / 2
     qsize = np.hypot(*x) * 2
@@ -75,11 +80,14 @@ def crop_image(filepath, output_size, quad, enable_padding=False):
     else:
         img = PIL.Image.open(filepath)
     transform_size = output_size
+    # Guard against NaN qsize (happens when no face was detected in frame)
+    if not np.isfinite(qsize) or qsize == 0:
+        return img.resize((output_size, output_size), _BILINEAR)
     # Shrink.
     shrink = int(np.floor(qsize / output_size * 0.5))
     if shrink > 1:
         rsize = (int(np.rint(float(img.size[0]) / shrink)), int(np.rint(float(img.size[1]) / shrink)))
-        img = img.resize(rsize, PIL.Image.ANTIALIAS)
+        img = img.resize(rsize, _LANCZOS)
         quad /= shrink
         qsize /= shrink
     # Crop.
@@ -109,9 +117,9 @@ def crop_image(filepath, output_size, quad, enable_padding=False):
         img = PIL.Image.fromarray(np.uint8(np.clip(np.rint(img), 0, 255)), 'RGB')
         quad += pad[:2]
     # Transform.
-    img = img.transform((transform_size, transform_size), PIL.Image.QUAD, (quad + 0.5).flatten(), PIL.Image.BILINEAR)
+    img = img.transform((transform_size, transform_size), PIL.Image.QUAD, (quad + 0.5).flatten(), _BILINEAR)
     if output_size < transform_size:
-        img = img.resize((output_size, output_size), PIL.Image.ANTIALIAS)
+        img = img.resize((output_size, output_size), _LANCZOS)
     return img
 
 def compute_transform(lm, predictor, detector=None, scale=1.0, fa=None):
@@ -151,7 +159,8 @@ def crop_faces(IMAGE_SIZE, files, scale, center_sigma=0.0, xy_sigma=0.0, use_fa=
     if use_fa:
         if fa == None:
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
-            fa = face_alignment.FaceAlignment(face_alignment.LandmarksType._2D, flip_input=True, device=device)
+            _ltype = getattr(face_alignment.LandmarksType, 'TWO_D', None) or getattr(face_alignment.LandmarksType, '_2D')
+            fa = face_alignment.FaceAlignment(_ltype, flip_input=True, device=device)
         predictor = None
         detector = None
     else:
@@ -162,9 +171,23 @@ def crop_faces(IMAGE_SIZE, files, scale, center_sigma=0.0, xy_sigma=0.0, use_fa=
         # detector = dlib.get_frontal_face_detector()
 
     cs, xs, ys = [], [], []
+    last_valid = None
     for lm, pil in tqdm(files):
-        c, x, y = compute_transform(lm, predictor, detector=detector,
-                                    scale=scale, fa=fa)
+        # Skip frames where landmarks are the -1 sentinel (no face detected)
+        if np.all(lm < 0):
+            if last_valid is not None:
+                c, x, y = last_valid
+            else:
+                # No valid frame yet — use image centre as a dummy transform
+                img_arr = np.array(pil)
+                h, w = img_arr.shape[:2]
+                c = np.array([w / 2.0, h / 2.0])
+                x = np.array([w / 4.0, 0.0])
+                y = np.array([0.0, h / 4.0])
+        else:
+            c, x, y = compute_transform(lm, predictor, detector=detector,
+                                        scale=scale, fa=fa)
+            last_valid = (c, x, y)
         cs.append(c)
         xs.append(x)
         ys.append(y)

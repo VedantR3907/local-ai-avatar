@@ -1,144 +1,184 @@
-<div align="center">
+---
+title: VideoReTalking
+emoji: 🎭
+colorFrom: green
+colorTo: blue
+sdk: gradio
+sdk_version: 4.0.0
+app_file: app.py
+pinned: true
+python_version: "3.10"
+---
 
-<h2>VideoReTalking <br/> <span style="font-size:12px">Audio-based Lip Synchronization for Talking Head Video Editing in the Wild</span> </h2> 
+[![HF Spaces Demo](https://img.shields.io/badge/Hugging%20Face-Spaces%20Demo-blue)](https://huggingface.co/spaces/Vedant3907/video-retalking)
 
-  <a href='https://arxiv.org/abs/2211.14758'><img src='https://img.shields.io/badge/ArXiv-2211.14758-red'></a> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href='https://vinthony.github.io/video-retalking/'><img src='https://img.shields.io/badge/Project-Page-Green'></a> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/vinthony/video-retalking/blob/main/quick_demo.ipynb)&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-[![Replicate](https://replicate.com/cjwbw/video-retalking/badge)](https://replicate.com/cjwbw/video-retalking)
+# VideoReTalking — Audio-based Lip Synchronization for Talking Head Videos
 
-<div>
-    <a target='_blank'>Kun Cheng <sup>*,1,2</sup> </a>&emsp;
-    <a href='https://vinthony.github.io/' target='_blank'>Xiaodong Cun <sup>*,2</a>&emsp;
-    <a href='https://yzhang2016.github.io/yongnorriszhang.github.io/' target='_blank'>Yong Zhang <sup>2</sup></a>&emsp;
-    <a href='https://menghanxia.github.io/' target='_blank'>Menghan Xia <sup>2</sup></a>&emsp;
-    <a href='https://feiiyin.github.io/' target='_blank'>Fei Yin <sup>2,3</sup></a>&emsp;<br/>
-    <a href='https://web.xidian.edu.cn/mrzhu/en/index.html' target='_blank'>Mingrui Zhu <sup>1</sup></a>&emsp;
-    <a href='https://xuanwangvc.github.io/' target='_blank'>Xuan Wang <sup>2</sup></a>&emsp;
-    <a href='https://juewang725.github.io/' target='_blank'>Jue Wang <sup>2</sup></a>&emsp;
-    <a href='https://web.xidian.edu.cn/nnwang/en/index.html' target='_blank'>Nannan Wang <sup>1</sup></a>
-</div>
-<br>
-<div>
-    <sup>1</sup> Xidian University &emsp; <sup>2</sup> Tencent AI Lab &emsp; <sup>3</sup> Tsinghua University
-</div>
-<br>
-<i><strong><a href='https://sa2022.siggraph.org/' target='_blank'>SIGGRAPH Asia 2022 Conference Track</a></strong></i>
-<br>
-<br>
-<img src="https://opentalker.github.io/video-retalking/static/images/teaser.png" width="768px">
+[![ArXiv](https://img.shields.io/badge/ArXiv-2211.14758-red)](https://arxiv.org/abs/2211.14758)
+[![Project Page](https://img.shields.io/badge/Project-Page-Green)](https://vinthony.github.io/video-retalking/)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/vinthony/video-retalking/blob/main/quick_demo.ipynb)
 
+> **SIGGRAPH Asia 2022** — Kun Cheng, Xiaodong Cun, Yong Zhang et al.
 
-<div align="justify">  <BR> We present VideoReTalking, a new system to edit the faces of a real-world talking head video according to input audio, producing a high-quality and lip-syncing output video even with a different emotion. Our system disentangles this objective into three sequential tasks:
-  
- <BR> (1) face video generation with a canonical expression
-<BR> (2) audio-driven lip-sync and 
-  <BR> (3) face enhancement for improving photo-realism. 
-  
- <BR>  Given a talking-head video, we first modify the expression of each frame according to the same expression template using the expression editing network, resulting in a video with the canonical expression. This video, together with the given audio, is then fed into the lip-sync network to generate a lip-syncing video. Finally, we improve the photo-realism of the synthesized faces through an identity-aware face enhancement network and post-processing. We use learning-based approaches for all three steps and all our modules can be tackled in a sequential pipeline without any user intervention.</div>
-<BR>
+Given a talking-head video and a new audio track, VideoReTalking produces a lip-synced output with matching expressions — no manual alignment required.
 
-<p>
-<img alt='pipeline' src="./docs/static/images/pipeline.png?raw=true" width="768px"><br>
-<em align='center'>Pipeline</em>
-</p>
+---
 
-</div>
+## How It Works
 
-## Results in the Wild （contains audio）
-https://user-images.githubusercontent.com/4397546/224310754-665eb2dd-aadc-47dc-b1f9-2029a937b20a.mp4
+The pipeline has three sequential stages:
 
+1. **Expression normalization** — rewrites every frame to a canonical neutral expression using DNet
+2. **Audio-driven lip sync** — drives the mouth with the target audio using LNet
+3. **Face enhancement** — sharpens and harmonizes the final face with GPEN/GFPGAN
 
+![Pipeline](docs/static/images/pipeline.png)
 
+---
 
-## Environment
-```
-git clone https://github.com/vinthony/video-retalking.git
+## Setup (Windows)
+
+### Prerequisites
+
+- [Miniconda](https://docs.conda.io/en/latest/miniconda.html) or Anaconda
+- NVIDIA GPU with CUDA 11.8+ (or CPU — slower)
+- [Git](https://git-scm.com/)
+
+### Option A — Automated (PowerShell)
+
+```powershell
+git clone https://github.com/your-username/video-retalking.git
 cd video-retalking
-conda create -n video_retalking python=3.8
-conda activate video_retalking
 
-conda install ffmpeg
+# For CUDA 11.8 (default):
+.\setup_windows.ps1
 
-# Please follow the instructions from https://pytorch.org/get-started/previous-versions/
-# This installation command only works on CUDA 11.1
-pip install torch==1.9.0+cu111 torchvision==0.10.0+cu111 -f https://download.pytorch.org/whl/torch_stable.html
+# For CUDA 12.1:
+.\setup_windows.ps1 -CudaVersion cu121
 
-pip install -r requirements.txt
+# CPU only:
+.\setup_windows.ps1 -CudaVersion cpu
 ```
 
-## Quick Inference
+### Option B — Manual Step-by-Step
 
-#### Pretrained Models
-Please download our [pre-trained models](https://drive.google.com/drive/folders/18rhjMpxK8LVVxf7PI6XwOidt8Vouv_H0?usp=share_link) and put them in `./checkpoints`.
+```powershell
+# 1. Create environment
+conda create --prefix "C:\conda_envs\video_retalking" python=3.8 -y
+conda activate "C:\conda_envs\video_retalking"
 
-<!-- We also provide some [example videos and audio](https://drive.google.com/drive/folders/14OwbNGDCAMPPdY-l_xO1axpUjkPxI9Dv?usp=share_link). Please put them in `./examples`. -->
+# 2. Install packages that need pre-built binaries (no C++ compiler required)
+conda install -c conda-forge ffmpeg lmdb dlib -y
 
-#### Inference
+# 3. Install PyTorch (adjust for your CUDA version)
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+
+# 4. Install basicsr (skip lmdb since it's already installed via conda)
+pip install basicsr==1.4.2 --no-deps
+pip install addict future pyyaml requests yapf
+
+# 5. Install remaining requirements
+pip install kornia==0.5.1 face-alignment==1.3.4 einops==0.4.1 facexlib==0.2.5 ^
+            librosa==0.9.2 "numpy>=1.23.4,<2.0" scipy scikit-image opencv-python Pillow tqdm
+```
+
+### Download Pretrained Models
+
+Download checkpoints from [Google Drive](https://drive.google.com/drive/folders/18rhjMpxK8LVVxf7PI6XwOidt8Vouv_H0?usp=share_link) and place them in `./checkpoints/`:
 
 ```
-python3 inference.py \
-  --face examples/face/1.mp4 \
-  --audio examples/audio/1.wav \
-  --outfile results/1_1.mp4
+checkpoints/
+├── DNet.pt
+├── LNet.pth
+├── ENet.pth
+├── GFPGANv1.3.pth
+└── ...
 ```
-This script includes data preprocessing steps. You can test any talking face videos without manual alignment. But it is worth noting that DNet cannot handle extreme poses.
 
-You can also control the expression by adding the following parameters:
+---
 
-```--exp_img```: Pre-defined expression template. The default is "neutral". You can choose "smile" or an image path.
+## Running Inference
 
-```--up_face```: You can choose "surprise" or "angry" to modify the expression of upper face with [GANimation](https://github.com/donydchen/ganimation_replicate).
+```powershell
+# Required once per terminal session
+$env:KMP_DUPLICATE_LIB_OK = "TRUE"
 
+python inference.py `
+  --face examples/face/women.mp4 `
+  --audio examples/audio/women_audio.wav `
+  --outfile results/output.mp4
+```
 
+### Optional Parameters
+
+| Flag | Default | Description |
+|---|---|---|
+| `--exp_img` | `neutral` | Expression template: `neutral`, `smile`, or path to an image |
+| `--up_face` | — | Upper face expression: `surprise` or `angry` |
+| `--LNet_batch_size` | `8` | Batch size for lip-sync network |
+| `--img_size` | `384` | Processing resolution |
+
+---
+
+## Compatibility Notes
+
+This repo has been patched to work with modern Python packages (2024+). The original codebase targeted older versions that are no longer available. Patches applied:
+
+| File | Issue | Fix |
+|---|---|---|
+| `utils/audio.py` | `librosa.filters.mel()` positional args removed | Changed to keyword args |
+| `third_part/face3d/extract_kp_videos.py` | `face_alignment.LandmarksType._2D` renamed | Use `TWO_D` with fallback |
+| `utils/inference_utils.py` | Same as above | Same fix |
+| `utils/alignment_stit.py` | Same as above | Same fix |
+| `third_part/face3d/extract_kp_videos.py` | `keypoints` unbound when no face detected | Initialize before loop |
+| `third_part/face3d/util/preprocess.py` | `np.VisibleDeprecationWarning` removed in NumPy 2.x | Guard with `hasattr` |
+| `third_part/face_detection/utils.py` | `np.int` removed in NumPy 1.24 | Changed to `np.int32` |
+| `basicsr/data/degradations.py` (site-packages) | `torchvision.transforms.functional_tensor` removed | Changed to `functional` |
+| `inference.py` | Dual OpenMP runtime crash on Windows | Set `KMP_DUPLICATE_LIB_OK=TRUE` |
+
+---
+
+## Project Structure
+
+```
+video-retalking/
+├── inference.py              # Main inference entry point
+├── checkpoints/              # Pretrained model weights
+├── examples/
+│   ├── face/                 # Sample face videos
+│   └── audio/                # Sample audio files
+├── models/                   # DNet, LNet, ENet definitions
+├── utils/                    # Audio processing, face alignment, blending
+├── third_part/               # GPEN, GFPGAN, face3d, face_detection
+├── results/                  # Output videos
+├── requirements.txt          # Python dependencies
+└── setup_windows.ps1         # One-click Windows setup script
+```
+
+---
 
 ## Citation
 
-If you find our work useful in your research, please consider citing:
-
-```
+```bibtex
 @misc{cheng2022videoretalking,
-        title={VideoReTalking: Audio-based Lip Synchronization for Talking Head Video Editing In the Wild}, 
-        author={Kun Cheng and Xiaodong Cun and Yong Zhang and Menghan Xia and Fei Yin and Mingrui Zhu and Xuan Wang and Jue Wang and Nannan Wang},
-        year={2022},
-        eprint={2211.14758},
-        archivePrefix={arXiv},
-        primaryClass={cs.CV}
-  }
+  title   = {VideoReTalking: Audio-based Lip Synchronization for Talking Head Video Editing In the Wild},
+  author  = {Kun Cheng and Xiaodong Cun and Yong Zhang and Menghan Xia and Fei Yin
+             and Mingrui Zhu and Xuan Wang and Jue Wang and Nannan Wang},
+  year    = {2022},
+  eprint  = {2211.14758},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.CV}
+}
 ```
 
-## Acknowledgement
-Thanks to
-[Wav2Lip](https://github.com/Rudrabha/Wav2Lip),
-[PIRenderer](https://github.com/RenYurui/PIRender), 
-[GFP-GAN](https://github.com/TencentARC/GFPGAN), 
-[GPEN](https://github.com/yangxy/GPEN),
-[ganimation_replicate](https://github.com/donydchen/ganimation_replicate),
+---
+
+## Acknowledgements
+
+Built on top of:
+[Wav2Lip](https://github.com/Rudrabha/Wav2Lip) •
+[PIRenderer](https://github.com/RenYurui/PIRender) •
+[GFP-GAN](https://github.com/TencentARC/GFPGAN) •
+[GPEN](https://github.com/yangxy/GPEN) •
+[ganimation_replicate](https://github.com/donydchen/ganimation_replicate) •
 [STIT](https://github.com/rotemtzaban/STIT)
-for sharing their code.
-
-
-## Related Work
-- [StyleHEAT: One-Shot High-Resolution Editable Talking Face Generation via Pre-trained StyleGAN (ECCV 2022)](https://github.com/FeiiYin/StyleHEAT)
-- [CodeTalker: Speech-Driven 3D Facial Animation with Discrete Motion Prior (CVPR 2023)](https://github.com/Doubiiu/CodeTalker)
-- [SadTalker: Learning Realistic 3D Motion Coefficients for Stylized Audio-Driven Single Image Talking Face Animation (CVPR 2023)](https://github.com/Winfredy/SadTalker)
-- [DPE: Disentanglement of Pose and Expression for General Video Portrait Editing (CVPR 2023)](https://github.com/Carlyx/DPE)
-- [3D GAN Inversion with Facial Symmetry Prior (CVPR 2023)](https://github.com/FeiiYin/SPI/)
-- [T2M-GPT: Generating Human Motion from Textual Descriptions with Discrete Representations (CVPR 2023)](https://github.com/Mael-zys/T2M-GPT)
-
-##  Disclaimer
-
-This is not an official product of Tencent. 
-
-```
-1. Please carefully read and comply with the open-source license applicable to this code before using it. 
-2. Please carefully read and comply with the intellectual property declaration applicable to this code before using it.
-3. This open-source code runs completely offline and does not collect any personal information or other data. If you use this code to provide services to end-users and collect related data, please take necessary compliance measures according to applicable laws and regulations (such as publishing privacy policies, adopting necessary data security strategies, etc.). If the collected data involves personal information, user consent must be obtained (if applicable). Any legal liabilities arising from this are unrelated to Tencent.
-4. Without Tencent's written permission, you are not authorized to use the names or logos legally owned by Tencent, such as "Tencent." Otherwise, you may be liable for your legal responsibilities.
-5. This open-source code does not have the ability to directly provide services to end-users. If you need to use this code for further model training or demos, as part of your product to provide services to end-users, or for similar use, please comply with applicable laws and regulations for your product or service. Any legal liabilities arising from this are unrelated to Tencent.
-6. It is prohibited to use this open-source code for activities that harm the legitimate rights and interests of others (including but not limited to fraud, deception, infringement of others' portrait rights, reputation rights, etc.), or other behaviors that violate applicable laws and regulations or go against social ethics and good customs (including providing incorrect or false information, spreading pornographic, terrorist, and violent information, etc.). Otherwise, you may be liable for your legal responsibilities.
-
-```
-## All Thanks To Our Contributors 
-
-<a href="https://github.com/OpenTalker/video-retalking/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=OpenTalker/video-retalking" />
-</a>

@@ -1,15 +1,49 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.env
+
+# Model checkpoints (large binary files — download separately)
+checkpoints/*
+!checkpoints/.gitkeep
+
+# Runtime generated outputs
+outputs/
+results/
+temp/
+
+# Logs
+*.log
+*.log.*
+inference_live*.log
+realtimesst.log
+
+# Voice agent generated audio (mic recordings & TTS output)
+outputs/mic_*.wav
+outputs/tts_*.wav
+outputs/mic_*.mp3
+outputs/tts_*.mp3
+women_audio.mp3
+
+# Old / draft scripts (not part of the clean portfolio)
+voice-agent-wav2lip.py
+voice-agent-video-retalking.py
+ui_video_player.py
+videoretalking_worker_entry.py
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Media files that shouldn't be committed
 *.pkl
-*.jpg
-*.pth
-*.pyc
-__pycache__
 *.h5
-*.pyc
 *.mkv
 *.gif
 *.webm
-checkpoints/*
-results/*
-temp/*
+
+# Misc
 segments.txt
-.DS_Store

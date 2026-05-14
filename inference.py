@@ -1,5 +1,24 @@
+import os
+import faulthandler, sys
+faulthandler.enable(file=sys.stderr)   # dump native stack on crash (SIGSEGV etc.)
+
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+os.environ["TORCHDYNAMO_DISABLE"] = "1"
+os.environ["TORCH_COMPILE_DISABLE"] = "1"
+
+import torch._dynamo
+torch._dynamo.config.suppress_errors = True
+torch._dynamo.disable()
+
+import warnings
+# Silence the harmless "torch.compiler has no attribute save_cache_artifacts" noise
+warnings.filterwarnings("ignore", message=".*save_cache_artifacts.*")
+warnings.filterwarnings("ignore", category=UserWarning, module="torch")
+
 import numpy as np
-import cv2, os, sys, subprocess, platform, torch
+import cv2, sys, subprocess, platform, torch
+from queue import Queue
+from threading import Thread
 from tqdm import tqdm
 from PIL import Image
 from scipy.io import loadmat
@@ -26,19 +45,60 @@ from utils.inference_utils import Laplacian_Pyramid_Blending_with_mask, face_det
 import warnings
 warnings.filterwarnings("ignore")
 
-args = options()
+_ENHANCER_CACHE = {}
+_RESTORER_CACHE = {}
 
-def main():    
+def _get_enhancer(device):
+    cache_key = str(device)
+    cached = _ENHANCER_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    enhancer = FaceEnhancement(
+        base_dir='checkpoints',
+        size=512,
+        model='GPEN-BFR-512',
+        use_sr=False,
+        sr_model='rrdb_realesrnet_psnr',
+        channel_multiplier=2,
+        narrow=1,
+        device=device,
+    )
+    _ENHANCER_CACHE[cache_key] = enhancer
+    return enhancer
+
+
+def _get_restorer():
+    cache_key = "GFPGANv1.3.pth"
+    cached = _RESTORER_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    restorer = GFPGANer(
+        model_path='checkpoints/GFPGANv1.3.pth',
+        upscale=1,
+        arch='clean',
+        channel_multiplier=2,
+        bg_upsampler=None,
+    )
+    _RESTORER_CACHE[cache_key] = restorer
+    return restorer
+
+
+def main(args=None):    
+    if args is None:
+        args = options()
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    if device == 'cuda':
+        torch.backends.cudnn.benchmark = True
     print('[Info] Using {} for inference.'.format(device))
     os.makedirs(os.path.join('temp', args.tmp_dir), exist_ok=True)
 
-    enhancer = FaceEnhancement(base_dir='checkpoints', size=512, model='GPEN-BFR-512', use_sr=False, \
-                               sr_model='rrdb_realesrnet_psnr', channel_multiplier=2, narrow=1, device=device)
-    restorer = GFPGANer(model_path='checkpoints/GFPGANv1.3.pth', upscale=1, arch='clean', \
-                        channel_multiplier=2, bg_upsampler=None)
+    enhancer = None
+    restorer = None
+    if not args.fast:
+        enhancer = _get_enhancer(device)
+        restorer = _get_restorer()
 
-    base_name = args.face.split('/')[-1]
+    base_name = os.path.basename(args.face)
     if os.path.isfile(args.face) and args.face.split('.')[1] in ['jpg', 'png', 'jpeg']:
         args.static = True
     if not os.path.isfile(args.face):
@@ -85,7 +145,8 @@ def main():
         lm = np.loadtxt('temp/'+base_name+'_landmarks.txt').astype(np.float32)
         lm = lm.reshape([len(full_frames), -1, 2])
        
-    if not os.path.isfile('temp/'+base_name+'_coeffs.npy') or args.exp_img is not None or args.re_preprocess:
+    use_custom_exp_image = args.exp_img is not None and ('.png' in args.exp_img or '.jpg' in args.exp_img)
+    if not os.path.isfile('temp/'+base_name+'_coeffs.npy') or use_custom_exp_image or args.re_preprocess:
         net_recon = load_face3d_net(args.face3d_net_path, device)
         lm3d_std = load_lm3d('checkpoints/BFM')
 
@@ -103,7 +164,7 @@ def main():
             trans_params, im_idx, lm_idx, _ = align_img(frame, lm_idx, lm3d_std)
             trans_params = np.array([float(item) for item in np.hsplit(trans_params, 5)]).astype(np.float32)
             im_idx_tensor = torch.tensor(np.array(im_idx)/255., dtype=torch.float32).permute(2, 0, 1).to(device).unsqueeze(0) 
-            with torch.no_grad():
+            with torch.inference_mode():
                 coeffs = split_coeff(net_recon(im_idx_tensor))
 
             pred_coeff = {key:coeffs[key].cpu().numpy() for key in coeffs}
@@ -117,7 +178,7 @@ def main():
         semantic_npy = np.load('temp/'+base_name+'_coeffs.npy').astype(np.float32)
 
     # generate the 3dmm coeff from a single image
-    if args.exp_img is not None and ('.png' in args.exp_img or '.jpg' in args.exp_img):
+    if use_custom_exp_image:
         print('extract the exp from',args.exp_img)
         exp_pil = Image.open(args.exp_img).convert('RGB')
         lm3d_std = load_lm3d('third_part/face3d/BFM')
@@ -135,7 +196,7 @@ def main():
         trans_params, im_exp, lm_exp, _ = align_img(exp_pil, lm_exp, lm3d_std)
         trans_params = np.array([float(item) for item in np.hsplit(trans_params, 5)]).astype(np.float32)
         im_exp_tensor = torch.tensor(np.array(im_exp)/255., dtype=torch.float32).permute(2, 0, 1).to(device).unsqueeze(0)
-        with torch.no_grad():
+        with torch.inference_mode():
             expression = split_coeff(net_recon(im_exp_tensor))['exp'][0]
         del net_recon
     elif args.exp_img == 'smile':
@@ -161,7 +222,7 @@ def main():
         
             # hacking the new expression
             coeff[:, :64, :] = expression[None, :64, None].to(device) 
-            with torch.no_grad():
+            with torch.inference_mode():
                 output = D_Net(source_img, coeff)
             img_stablized = np.uint8((output['fake_image'].squeeze(0).permute(1,2,0).cpu().clamp_(-1, 1).numpy() + 1 )/2. * 255)
             imgs.append(cv2.cvtColor(img_stablized,cv2.COLOR_RGB2BGR)) 
@@ -196,11 +257,31 @@ def main():
     lm = lm[:len(mel_chunks)]
     
     imgs_enhanced = []
-    for idx in tqdm(range(len(imgs)), desc='[Step 5] Reference Enhancement'):
-        img = imgs[idx]
-        pred, _, _ = enhancer.process(img, img, face_enhance=True, possion_blending=False)
-        imgs_enhanced.append(pred)
-    gen = datagen(imgs_enhanced.copy(), mel_chunks, full_frames, None, (oy1,oy2,ox1,ox2))
+    step5_cache_path = 'temp/' + base_name + '_enhanced_refs.npy'
+    if args.fast:
+        print('[Step 5] Fast mode: skipping reference enhancement.')
+        imgs_enhanced = imgs
+    else:
+        if os.path.isfile(step5_cache_path) and not args.re_preprocess:
+            cached_refs = np.load(step5_cache_path)
+            if len(cached_refs) == len(imgs):
+                print('[Step 5] Using cached reference enhancement.')
+                imgs_enhanced = [cached_refs[i] for i in range(len(cached_refs))]
+            elif len(cached_refs) > len(imgs):
+                print('[Step 5] Using cached reference enhancement (prefix).')
+                imgs_enhanced = [cached_refs[i] for i in range(len(imgs))]
+            else:
+                print('[Step 5] Reference cache length mismatch; recomputing.')
+
+        if len(imgs_enhanced) == 0:
+            if enhancer is None:
+                enhancer = _get_enhancer(device)
+            for idx in tqdm(range(len(imgs)), desc='[Step 5] Reference Enhancement'):
+                img = imgs[idx]
+                pred, _, _ = enhancer.process(img, img, face_enhance=True, possion_blending=False)
+                imgs_enhanced.append(pred)
+            np.save(step5_cache_path, np.array(imgs_enhanced))
+    gen = datagen(imgs_enhanced.copy(), mel_chunks, full_frames, None, (oy1,oy2,ox1,ox2), args)
 
     frame_h, frame_w = full_frames[0].shape[:-1]
     out = cv2.VideoWriter('temp/{}/result.mp4'.format(args.tmp_dir), cv2.VideoWriter_fourcc(*'mp4v'), fps, (frame_w, frame_h))
@@ -210,13 +291,36 @@ def main():
         instance.initialize()
         instance.setup()
 
-    kp_extractor = KeypointExtractor()
+    fast_write_queue = None
+    fast_writer_thread = None
+    fast_writer_stop = object()
+    if args.fast:
+        fast_write_queue = Queue(maxsize=4)
+
+        def _fast_writer_loop():
+            while True:
+                item = fast_write_queue.get()
+                if item is fast_writer_stop:
+                    fast_write_queue.task_done()
+                    break
+                pred_batch, f_frames_batch, coords_batch = item
+                for p, xf, c in zip(pred_batch, f_frames_batch, coords_batch):
+                    y1, y2, x1, x2 = c
+                    p = cv2.resize(p.astype(np.uint8), (x2 - x1, y2 - y1))
+                    ff = xf.copy()
+                    ff[y1:y2, x1:x2] = p
+                    out.write(ff)
+                fast_write_queue.task_done()
+
+        fast_writer_thread = Thread(target=_fast_writer_loop, daemon=True)
+        fast_writer_thread.start()
+
     for i, (img_batch, mel_batch, frames, coords, img_original, f_frames) in enumerate(tqdm(gen, desc='[Step 6] Lip Synthesis:', total=int(np.ceil(float(len(mel_chunks)) / args.LNet_batch_size)))):
         img_batch = torch.FloatTensor(np.transpose(img_batch, (0, 3, 1, 2))).to(device)
         mel_batch = torch.FloatTensor(np.transpose(mel_batch, (0, 3, 1, 2))).to(device)
         img_original = torch.FloatTensor(np.transpose(img_original, (0, 3, 1, 2))).to(device)/255. # BGR -> RGB
         
-        with torch.no_grad():
+        with torch.inference_mode():
             incomplete, reference = torch.split(img_batch, 3, dim=1) 
             pred, low_res = model(mel_batch, img_batch, reference)
             pred = torch.clamp(pred, 0, 1)
@@ -242,14 +346,17 @@ def main():
         
         pred = pred.cpu().numpy().transpose(0, 2, 3, 1) * 255.
 
-        torch.cuda.empty_cache()
+        if args.fast:
+            fast_write_queue.put((pred, f_frames, coords))
+            continue
+
         for p, f, xf, c in zip(pred, frames, f_frames, coords):
             y1, y2, x1, x2 = c
             p = cv2.resize(p.astype(np.uint8), (x2 - x1, y2 - y1))
             
             ff = xf.copy() 
             ff[y1:y2, x1:x2] = p
-            
+
             # month region enhancement by GFPGAN
             cropped_faces, restored_faces, restored_img = restorer.enhance(
                 ff, has_aligned=False, only_center_face=True, paste_back=True)
@@ -266,6 +373,12 @@ def main():
 
             pp, orig_faces, enhanced_faces = enhancer.process(pp, xf, bbox=c, face_enhance=False, possion_blending=True)
             out.write(pp)
+
+    if args.fast and fast_write_queue is not None:
+        fast_write_queue.put(fast_writer_stop)
+        fast_write_queue.join()
+        fast_writer_thread.join()
+
     out.release()
     
     if not os.path.isdir(os.path.dirname(args.outfile)):
@@ -276,23 +389,69 @@ def main():
 
 
 # frames:256x256, full_frames: original size
-def datagen(frames, mels, full_frames, frames_pil, cox):
+def datagen(frames, mels, full_frames, frames_pil, cox, args):
     img_batch, mel_batch, frame_batch, coords_batch, ref_batch, full_frame_batch = [], [], [], [], [], []
-    base_name = args.face.split('/')[-1]
+    base_name = os.path.basename(args.face)
     refs = []
     image_size = 256 
 
     # original frames
-    kp_extractor = KeypointExtractor()
     fr_pil = [Image.fromarray(frame) for frame in frames]
-    lms = kp_extractor.extract_keypoint(fr_pil, 'temp/'+base_name+'x12_landmarks.txt')
+    x12_landmarks_path = 'temp/' + base_name + 'x12_landmarks.txt'
+    if not os.path.isfile(x12_landmarks_path) or args.re_preprocess:
+        print('[Step 6-Prep] Extracting datagen landmarks.')
+        kp_extractor = KeypointExtractor()
+        lms = kp_extractor.extract_keypoint(fr_pil, x12_landmarks_path)
+        del kp_extractor.detector
+    else:
+        print('[Step 6-Prep] Using cached datagen landmarks.')
+        lms_raw = np.loadtxt(x12_landmarks_path).astype(np.float32).reshape(-1, 2)
+        if lms_raw.shape[0] % 68 == 0:
+            lms = lms_raw.reshape([-1, 68, 2])
+            if len(lms) >= len(fr_pil):
+                if len(lms) > len(fr_pil):
+                    print('[Step 6-Prep] Using cached datagen landmarks (prefix).')
+                lms = lms[:len(fr_pil)]
+            else:
+                print('[Step 6-Prep] Datagen landmark cache too short; recomputing.')
+                kp_extractor = KeypointExtractor()
+                lms = kp_extractor.extract_keypoint(fr_pil, x12_landmarks_path)
+                del kp_extractor.detector
+        else:
+            print('[Step 6-Prep] Datagen landmark cache malformed; recomputing.')
+            kp_extractor = KeypointExtractor()
+            lms = kp_extractor.extract_keypoint(fr_pil, x12_landmarks_path)
+            del kp_extractor.detector
+
     frames_pil = [ (lm, frame) for frame,lm in zip(fr_pil, lms)] # frames is the croped version of modified face
     crops, orig_images, quads  = crop_faces(image_size, frames_pil, scale=1.0, use_fa=True)
     inverse_transforms = [calc_alignment_coefficients(quad + 0.5, [[0, 0], [0, image_size], [image_size, image_size], [image_size, 0]]) for quad in quads]
-    del kp_extractor.detector
 
     oy1,oy2,ox1,ox2 = cox
-    face_det_results = face_detect(full_frames, args, jaw_correction=True)
+    facedet_coords_path = 'temp/' + base_name + '_facedet_coords.npy'
+    face_det_results = None
+    if os.path.isfile(facedet_coords_path) and not args.re_preprocess:
+        cached_coords = np.load(facedet_coords_path)
+        if len(cached_coords) == len(full_frames):
+            print('[Step 6-Prep] Using cached face boxes.')
+            face_det_results = []
+            for full_frame, coords in zip(full_frames, cached_coords):
+                y1, y2, x1, x2 = [int(v) for v in coords]
+                face_det_results.append([full_frame[y1:y2, x1:x2], (y1, y2, x1, x2)])
+        elif len(cached_coords) > len(full_frames):
+            print('[Step 6-Prep] Using cached face boxes (prefix).')
+            face_det_results = []
+            for full_frame, coords in zip(full_frames, cached_coords[:len(full_frames)]):
+                y1, y2, x1, x2 = [int(v) for v in coords]
+                face_det_results.append([full_frame[y1:y2, x1:x2], (y1, y2, x1, x2)])
+        else:
+            print('[Step 6-Prep] Face-box cache length mismatch; recomputing.')
+
+    if face_det_results is None:
+        print('[Step 6-Prep] Running face detection.')
+        face_det_results = face_detect(full_frames, args, jaw_correction=True)
+        facedet_coords = np.array([item[1] for item in face_det_results], dtype=np.int32)
+        np.save(facedet_coords_path, facedet_coords)
 
     for inverse_transform, crop, full_frame, face_det in zip(inverse_transforms, crops, full_frames, face_det_results):
         imc_pil = paste_image(inverse_transform, crop, Image.fromarray(
@@ -332,14 +491,29 @@ def datagen(frames, mels, full_frames, frames_pil, cox):
             img_batch, mel_batch, frame_batch, coords_batch, img_original, full_frame_batch, ref_batch  = [], [], [], [], [], [], []
 
     if len(img_batch) > 0:
+        # Pad the remainder batch to full LNet_batch_size so CUDA never sees a new
+        # tensor shape and avoids a full kernel recompilation (can save 5+ minutes).
+        real_count = len(img_batch)
+        pad_count  = args.LNet_batch_size - real_count
+        if pad_count > 0:
+            img_batch       = img_batch       + [img_batch[-1]]       * pad_count
+            mel_batch       = mel_batch       + [mel_batch[-1]]       * pad_count
+            ref_batch       = ref_batch       + [ref_batch[-1]]       * pad_count
+            frame_batch     = frame_batch     + [frame_batch[-1]]     * pad_count
+            coords_batch    = coords_batch    + [coords_batch[-1]]    * pad_count
+            full_frame_batch= full_frame_batch+ [full_frame_batch[-1]]* pad_count
+
         img_batch, mel_batch, ref_batch = np.asarray(img_batch), np.asarray(mel_batch), np.asarray(ref_batch)
         img_masked = img_batch.copy()
         img_original = img_batch.copy()
         img_masked[:, args.img_size//2:] = 0
         img_batch = np.concatenate((img_masked, ref_batch), axis=3) / 255.
         mel_batch = np.reshape(mel_batch, [len(mel_batch), mel_batch.shape[1], mel_batch.shape[2], 1])
-        yield img_batch, mel_batch, frame_batch, coords_batch, img_original, full_frame_batch
+
+        # Yield only the real items (padded items are silently discarded by caller)
+        yield img_batch, mel_batch, frame_batch[:real_count], coords_batch[:real_count], img_original, full_frame_batch[:real_count]
 
 
 if __name__ == '__main__':
     main()
+

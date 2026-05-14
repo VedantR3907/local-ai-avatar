@@ -1,6 +1,7 @@
 import numpy as np
 import cv2, argparse, torch
 import torchvision.transforms.functional as TF
+from concurrent.futures import ThreadPoolExecutor
 
 from models import load_network, load_DNet
 from tqdm import tqdm
@@ -11,6 +12,8 @@ from third_part.face3d.models import networks
 
 import warnings
 warnings.filterwarnings("ignore")
+
+_MODEL_CACHE = {}
 
 def options():
     parser = argparse.ArgumentParser(description='Inference code to lip-sync videos in the wild using Wav2Lip models')
@@ -44,6 +47,7 @@ def options():
     parser.add_argument('--without_rl1', default=False, action='store_true', help='Do not use the relative l1')
     parser.add_argument('--tmp_dir', type=str, default='temp', help='Folder to save tmp results')
     parser.add_argument('--re_preprocess', action='store_true')
+    parser.add_argument('--fast', action='store_true', help='Skip heavy face enhancement/restoration passes for faster runtime')
     
     args = parser.parse_args()
     return args
@@ -108,7 +112,8 @@ def get_smoothened_boxes(boxes, T):
 def face_detect(images, args, jaw_correction=False, detector=None):
     if detector == None:
         device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-        detector = face_detection.FaceAlignment(face_detection.LandmarksType._2D, 
+        _ltype = getattr(face_detection.LandmarksType, 'TWO_D', None) or getattr(face_detection.LandmarksType, '_2D')
+        detector = face_detection.FaceAlignment(_ltype,
                                                 flip_input=False, device=device)
 
     batch_size = args.face_det_batch_size    
@@ -221,8 +226,23 @@ def Laplacian_Pyramid_Blending_with_mask(A, B, m, num_levels = 6):
     return ls_
 
 def load_model(args, device):
-    D_Net = load_DNet(args).to(device)
-    model = load_network(args).to(device)
+    cache_key = (
+        str(args.DNet_path),
+        str(args.LNet_path),
+        str(args.ENet_path),
+        str(device),
+    )
+    cached = _MODEL_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    # Parallelize checkpoint deserialization to reduce startup latency.
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        dnet_fut = ex.submit(load_DNet, args)
+        lnet_fut = ex.submit(load_network, args)
+        D_Net = dnet_fut.result().to(device)
+        model = lnet_fut.result().to(device)
+    _MODEL_CACHE[cache_key] = (D_Net, model)
     return D_Net, model
 
 def normalize_kp(kp_source, kp_driving, kp_driving_initial, adapt_movement_scale=False,
