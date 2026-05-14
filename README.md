@@ -98,7 +98,7 @@ The model weights (~4 GB) are hosted on Hugging Face:
 
 ```python
 from huggingface_hub import snapshot_download
-snapshot_download(repo_id="VedantR3907/local-ai-avatar-checkpoints",
+snapshot_download(repo_id="Vedant3907/local-ai-avatar-checkpoints",
                   local_dir="checkpoints")
 ```
 
