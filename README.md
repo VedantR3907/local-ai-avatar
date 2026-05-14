@@ -5,6 +5,8 @@
 
 Speak → AI replies → Watch the avatar say it with synced lips.
 
+<video src="https://github.com/user-attachments/assets/b1977f39-8649-41ac-b68a-9a9b2177ec1c" controls autoplay loop muted width="100%"></video>
+
 A fully hands-free voice pipeline built on top of VideoReTalking:
 
 **Mic** → **Silero VAD** (auto-detects speech) → **Whisper STT** → **Ollama Cloud LLM** → **gTTS** → **VideoReTalking lip-sync** → **Video plays automatically**
