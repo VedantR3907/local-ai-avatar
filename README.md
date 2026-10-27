@@ -5,8 +5,7 @@
 
 Speak → AI replies → Watch the avatar say it with synced lips.
 
-https://github.com/user-attachments/assets/8a450f22-5f07-4736-aaa8-5acc8c13fb45
-
+https://github.com/user-attachments/assets/938e31b1-7613-46c6-a7b4-ce70a254ea6a
 
 A fully hands-free voice pipeline built on top of VideoReTalking:
 
